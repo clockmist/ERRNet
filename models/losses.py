@@ -248,6 +248,17 @@ class DiscLossRa(DiscLoss):
         return loss_D * 0.5, pred_fake, pred_real
 
 
+class ResidualConsistencyLoss(nn.Module):
+    """L1 loss enforcing physical constraint: I = T + R + Phi(T,R)."""
+    def __init__(self):
+        super(ResidualConsistencyLoss, self).__init__()
+        self.loss = nn.L1Loss()
+
+    def forward(self, input_img, output_t, output_r, residual):
+        reconstruction = output_t + output_r + residual
+        return self.loss(input_img, reconstruction)
+
+
 def init_loss(opt, tensor):
     disc_loss = None
     content_loss = None

@@ -104,16 +104,17 @@ class ERRNetBase(BaseModel):
                 target_r = target_r.to(device=self.gpu_ids[0])                
         
         self.input = input
-        
+
         self.input_edge = self.edge_map(self.input)
         self.target_t = target_t
+        self.target_r = target_r
         self.data_name = data_name
 
         self.issyn = not _flag_enabled(data, 'real', default=False)
         self.aligned = not _flag_enabled(data, 'unaligned', default=False)
-        
-        if target_t is not None:            
-            self.target_edge = self.edge_map(self.target_t)         
+
+        if target_t is not None:
+            self.target_edge = self.edge_map(self.target_t)
             
     def eval(self, data, savedir=None, suffix=None, pieapp=None):
         # only the 1st input of the whole minibatch would be evaluated
