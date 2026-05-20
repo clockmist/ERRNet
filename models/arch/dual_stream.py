@@ -9,14 +9,15 @@ class DualStreamNet(torch.nn.Module):
     """Dual-stream variant of DRNet that outputs both transmission T and reflection R.
 
     Shares the same encoder architecture as DRNet (conv1-conv2-conv3-res_module-
-    deconv1-deconv2-pyramid_module) but replaces the single output head with two
-    parallel 1x1 conv heads.  Encoder parameter names are kept identical to DRNet
-    so pretrained DRNet weights can be loaded directly.
+    deconv1-deconv2-pyramid_module).  When dsa=False the shared features go
+    directly to two 1x1 output heads.  When dsa=True the features are first
+    split into separate T/R streams, processed through cross-attention (DSA),
+    then projected to 3-channel outputs.
     """
 
     def __init__(self, in_channels, out_channels, n_feats, n_resblocks,
                  norm=nn.BatchNorm2d, se_reduction=None, res_scale=1,
-                 bottom_kernel_size=3, pyramid=False):
+                 bottom_kernel_size=3, pyramid=False, dsa=False):
         super(DualStreamNet, self).__init__()
 
         conv = nn.Conv2d
@@ -24,6 +25,7 @@ class DualStreamNet(torch.nn.Module):
         act = nn.ReLU(True)
 
         self.pyramid_module = None
+        self.dsa_module = None
 
         # Shared encoder — identical to DRNet
         self.conv1 = ConvLayer(conv, in_channels, n_feats,
@@ -54,11 +56,31 @@ class DualStreamNet(torch.nn.Module):
                                                  scales=(4, 8, 16, 32),
                                                  ct_channels=n_feats // 4)
 
-        # Dual output heads — 1x1 conv, no norm, no activation
-        self.head_T = ConvLayer(conv, n_feats, out_channels,
-                                kernel_size=1, stride=1, norm=None, act=None)
-        self.head_R = ConvLayer(conv, n_feats, out_channels,
-                                kernel_size=1, stride=1, norm=None, act=None)
+        if dsa:
+            from .dsa import DSA
+            # Split convs: shared features → per-stream features
+            self.split_T = ConvLayer(conv, n_feats, n_feats,
+                                     kernel_size=1, stride=1,
+                                     norm=None, act=None)
+            self.split_R = ConvLayer(conv, n_feats, n_feats,
+                                     kernel_size=1, stride=1,
+                                     norm=None, act=None)
+            self.dsa_module = DSA(n_feats)
+            # Output heads take post-DSA features
+            self.head_T = ConvLayer(conv, n_feats, out_channels,
+                                    kernel_size=1, stride=1,
+                                    norm=None, act=None)
+            self.head_R = ConvLayer(conv, n_feats, out_channels,
+                                    kernel_size=1, stride=1,
+                                    norm=None, act=None)
+        else:
+            # Direct output heads from shared features (no interaction)
+            self.head_T = ConvLayer(conv, n_feats, out_channels,
+                                    kernel_size=1, stride=1,
+                                    norm=None, act=None)
+            self.head_R = ConvLayer(conv, n_feats, out_channels,
+                                    kernel_size=1, stride=1,
+                                    norm=None, act=None)
 
     def forward(self, x):
         x = self.conv1(x)
@@ -71,8 +93,15 @@ class DualStreamNet(torch.nn.Module):
         if self.pyramid_module is not None:
             x = self.pyramid_module(x)
 
-        t = self.head_T(x)
-        r = self.head_R(x)
+        if self.dsa_module is not None:
+            ft = self.split_T(x)
+            fr = self.split_R(x)
+            ft, fr = self.dsa_module(ft, fr)
+            t = self.head_T(ft)
+            r = self.head_R(fr)
+        else:
+            t = self.head_T(x)
+            r = self.head_R(x)
 
         return t, r
 

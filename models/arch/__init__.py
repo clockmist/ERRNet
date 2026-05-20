@@ -14,3 +14,7 @@ def errnet(in_channels, out_channels, **kwargs):
 
 def dual_errnet(in_channels, out_channels, **kwargs):
     return DualStreamNet(in_channels, out_channels, 256, 13, norm=None, res_scale=0.1, se_reduction=8, bottom_kernel_size=1, pyramid=True, **kwargs)
+
+
+def dsa_errnet(in_channels, out_channels, **kwargs):
+    return DualStreamNet(in_channels, out_channels, 256, 13, norm=None, res_scale=0.1, se_reduction=8, bottom_kernel_size=1, pyramid=True, dsa=True, **kwargs)
