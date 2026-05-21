@@ -259,6 +259,42 @@ class ResidualConsistencyLoss(nn.Module):
         return self.loss(input_img, reconstruction)
 
 
+class ContrastiveLoss(nn.Module):
+    """Triplet loss pulling T features toward GT and away from R features.
+
+    L = max(0, d(f_T, f_T^gt) - d(f_T, f_R) + margin)
+    where d is cosine distance and features come from VGG-19.
+    """
+
+    def __init__(self, vgg, layer_index=30, margin=0.5):
+        super(ContrastiveLoss, self).__init__()
+        self.vgg = vgg
+        self.indices = [layer_index]
+        self.margin = margin
+        device = next(self.vgg.parameters()).device
+        self.normalize = MeanShift([0.485, 0.456, 0.406], [0.229, 0.224, 0.225],
+                                   norm=True).to(device)
+
+    def _extract(self, img):
+        feats = self.vgg(img, self.indices)[0]       # [B, 512, H', W']
+        return feats.mean(dim=[2, 3])                 # [B, 512]
+
+    def forward(self, output_t, output_r, target_t):
+        output_t_n = self.normalize(output_t)
+        output_r_n = self.normalize(output_r)
+        target_t_n = self.normalize(target_t)
+
+        f_t = self._extract(output_t_n)
+        f_r = self._extract(output_r_n)
+        f_tgt = self._extract(target_t_n)
+
+        d_pos = 1 - F.cosine_similarity(f_t, f_tgt, dim=1)
+        d_neg = 1 - F.cosine_similarity(f_t, f_r, dim=1)
+
+        loss = F.relu(d_pos - d_neg + self.margin)
+        return loss.mean()
+
+
 def init_loss(opt, tensor):
     disc_loss = None
     content_loss = None

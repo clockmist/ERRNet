@@ -39,6 +39,7 @@ class TrainOptions(BaseOptions):
         
         self.parser.add_argument('--lambda_gan', type=float, default=0.01, help='weight for gan loss')
         self.parser.add_argument('--lambda_vgg', type=float, default=0.1, help='weight for vgg loss')
-        self.parser.add_argument('--lambda_residual', type=float, default=0.5, help='weight for residual consistency loss (dual-stream only)')
+        self.parser.add_argument('--lambda_residual', type=float, default=0.1, help='weight for residual consistency loss (dual-stream only)')
+        self.parser.add_argument('--lambda_contrastive', type=float, default=0.05, help='weight for contrastive loss (dual-stream only)')
         
         self.isTrain = True

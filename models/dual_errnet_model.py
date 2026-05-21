@@ -99,6 +99,11 @@ class DualERRNetModel(ERRNetBase):
 
             self.loss_residual = losses.ResidualConsistencyLoss()
 
+            self.loss_contrastive = None
+            if self.vgg is not None:
+                self.loss_contrastive = losses.ContrastiveLoss(
+                    self.vgg, layer_index=30, margin=0.5)
+
             # define discriminator
             self.netD = networks.define_D(opt, 3)
             self.optimizer_D = torch.optim.Adam(
@@ -139,6 +144,7 @@ class DualERRNetModel(ERRNetBase):
         self.loss_r_pixel = None
         self.loss_r_vgg = None
         self.loss_residual_val = None
+        self.loss_contrastive_val = None
         self.loss_G_GAN = None
 
         if self.opt.lambda_gan > 0:
@@ -163,15 +169,25 @@ class DualERRNetModel(ERRNetBase):
                     self.output_r, self.target_r)
                 self.loss_G += self.loss_r_pixel + \
                     self.loss_r_vgg * self.opt.lambda_vgg
+
         else:
             # CX on T only; skip CX on R since target_r is fake for all real data
             self.loss_CX = self.loss_dic['t_cx'].get_loss(
                 self.output_t, self.target_t)
             self.loss_G += self.loss_CX
 
+        # Contrastive: pull T toward GT, push T away from R
+        # VGG+GAP provides partial spatial invariance, works on both aligned and unaligned
+        if self.loss_contrastive is not None:
+            lambda_contrastive = getattr(self.opt, 'lambda_contrastive', 0.05)
+            if lambda_contrastive > 0:
+                self.loss_contrastive_val = self.loss_contrastive(
+                    self.output_t, self.output_r, self.target_t)
+                self.loss_G += self.loss_contrastive_val * lambda_contrastive
+
         # residual consistency loss (always computed, self-supervised)
         residual = self.residual_module(self.output_t, self.output_r)
-        lambda_residual = getattr(self.opt, 'lambda_residual', 0.5)
+        lambda_residual = getattr(self.opt, 'lambda_residual', 0.1)
         self.loss_residual_val = self.loss_residual(
             self.input, self.output_t, self.output_r, residual)
         self.loss_G += self.loss_residual_val * lambda_residual
@@ -225,6 +241,8 @@ class DualERRNetModel(ERRNetBase):
             ret_errors['RVGG'] = self.loss_r_vgg.item()
         if self.loss_residual_val is not None:
             ret_errors['Residual'] = self.loss_residual_val.item()
+        if self.loss_contrastive_val is not None:
+            ret_errors['Contrastive'] = self.loss_contrastive_val.item()
         if self.opt.lambda_gan > 0 and self.loss_G_GAN is not None:
             ret_errors['G'] = self.loss_G_GAN.item()
             ret_errors['D'] = self.loss_D.item()
