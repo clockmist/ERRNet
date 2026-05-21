@@ -57,10 +57,18 @@ class CrossWindowAttention(nn.Module):
 
     def forward(self, query, key_value):
         # query, key_value: [B, H, W, C]
-        B, H, W, C = query.shape
+        B, H_orig, W_orig, C = query.shape
+        M = self.window_size
 
-        q_windows = _window_partition(query, self.window_size)        # [N, M², C]
-        kv_windows = _window_partition(key_value, self.window_size)   # [N, M², C]
+        # Pad to make H,W divisible by window_size
+        pad_h = (M - H_orig % M) % M
+        pad_w = (M - W_orig % M) % M
+        if pad_h > 0 or pad_w > 0:
+            query = F.pad(query, (0, 0, 0, pad_w, 0, pad_h))
+            key_value = F.pad(key_value, (0, 0, 0, pad_w, 0, pad_h))
+
+        q_windows = _window_partition(query, M)        # [N, M², C]
+        kv_windows = _window_partition(key_value, M)   # [N, M², C]
 
         Q = self.q_proj(q_windows)
         K, V = self.kv_proj(kv_windows).chunk(2, dim=-1)
@@ -77,9 +85,12 @@ class CrossWindowAttention(nn.Module):
         attn = F.softmax(attn, dim=-1)
 
         out = attn @ V
-        out = out.permute(0, 2, 1, 3).reshape(-1, self.window_size ** 2, self.dim)
+        out = out.permute(0, 2, 1, 3).reshape(-1, M ** 2, self.dim)
         out = self.proj(out)
-        out = _window_reverse(out, self.window_size, H, W)
+        out = _window_reverse(out, M, H_orig + pad_h, W_orig + pad_w)
+
+        if pad_h > 0 or pad_w > 0:
+            out = out[:, :H_orig, :W_orig, :]
 
         return out
 
