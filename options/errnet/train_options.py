@@ -36,8 +36,10 @@ class TrainOptions(BaseOptions):
         # loss weight
         self.parser.add_argument('--unaligned_loss', type=str, default='vgg', help='learning rate policy: vgg|mse|ctx|ctx_vgg')
         self.parser.add_argument('--vgg_layer', type=int, default=31, help='vgg layer of unaligned loss')
-        
+
         self.parser.add_argument('--lambda_gan', type=float, default=0.01, help='weight for gan loss')
         self.parser.add_argument('--lambda_vgg', type=float, default=0.1, help='weight for vgg loss')
-        
+        self.parser.add_argument('--lambda_excl', type=float, default=0.0, help='weight for exclusion loss (WEGNet, default 0.0 = disabled)')
+        self.parser.add_argument('--lambda_grad', type=float, default=0.0, help='weight for extra gradient loss (WEGNet, 0 disables since GradientLoss already in t_pixel)')
+
         self.isTrain = True

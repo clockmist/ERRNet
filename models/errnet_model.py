@@ -213,11 +213,14 @@ class ERRNetModel(ERRNetBase):
 
         in_channels = 3
         self.vgg = None
-        
+
         if opt.hyper:
             self.vgg = losses.Vgg19(requires_grad=False).to(self.device)
-            in_channels += 1472
-        
+            if opt.inet == 'wegnet':
+                in_channels = 256 + 1472  # wavelet_proj(256) + VGG HyperColumn(1472)
+            else:
+                in_channels += 1472  # RGB(3) + VGG HyperColumn(1472) = 1475
+
         self.net_i = arch.__dict__[self.opt.inet](in_channels, 3).to(self.device)
         networks.init_weights(self.net_i, init_type=opt.init_type) # using default initialization as EDSR
         self.edge_map = EdgeMap(scale=1).to(self.device)
@@ -228,6 +231,9 @@ class ERRNetModel(ERRNetBase):
             vggloss = losses.ContentLoss()
             vggloss.initialize(losses.VGGLoss(self.vgg))
             self.loss_dic['t_vgg'] = vggloss
+
+            # Exclusion loss (WEGNet): gradient-domain independence
+            self.exclusion_loss = losses.ExclusionLoss(num_scales=3).to(self.device)
 
             cxloss = losses.ContentLoss()
             if opt.unaligned_loss == 'vgg':
@@ -251,7 +257,7 @@ class ERRNetModel(ERRNetBase):
             self._init_optimizer([self.optimizer_D])
 
             # initialize optimizers
-            self.optimizer_G = torch.optim.Adam(self.net_i.parameters(), 
+            self.optimizer_G = torch.optim.Adam(self.net_i.parameters(),
                 lr=opt.lr, betas=(0.9, 0.999), weight_decay=opt.wd)
 
             self._init_optimizer([self.optimizer_G])
@@ -275,46 +281,65 @@ class ERRNetModel(ERRNetBase):
         # Make it a tiny bit faster
         for p in self.netD.parameters():
             p.requires_grad = False
-        
+
         self.loss_G = 0
         self.loss_CX = None
         self.loss_icnn_pixel = None
         self.loss_icnn_vgg = None
         self.loss_G_GAN = None
+        self.loss_excl = None
 
         if self.opt.lambda_gan > 0:
             self.loss_G_GAN = self.loss_dic['gan'].get_g_loss(
                 self.netD, self.input, self.output_i, self.target_t) #self.pred_real.detach())
             self.loss_G += self.loss_G_GAN*self.opt.lambda_gan
-        
+
         if self.aligned:
             self.loss_icnn_pixel = self.loss_dic['t_pixel'].get_loss(
                 self.output_i, self.target_t)
-            
+
             self.loss_icnn_vgg = self.loss_dic['t_vgg'].get_loss(
                 self.output_i, self.target_t)
 
             self.loss_G += self.loss_icnn_pixel+self.loss_icnn_vgg*self.opt.lambda_vgg
         else:
             self.loss_CX = self.loss_dic['t_cx'].get_loss(self.output_i, self.target_t)
-            
+
             self.loss_G += self.loss_CX
-        
+
+        # Exclusion loss (WEGNet): gradient-domain independence, no R-GT needed
+        if self.opt.lambda_excl > 0:
+            self.loss_excl = self.exclusion_loss(self.output_i, self.input)
+            self.loss_G += self.loss_excl * self.opt.lambda_excl
+
         self.loss_G.backward()
 
     def forward(self):
-        # without edge
         input_i = self.input
+        _, C, H, W = input_i.shape
 
-        if self.vgg is not None:
-            hypercolumn = self.vgg(self.input)
-            _, C, H, W = self.input.shape
-            hypercolumn = [F.interpolate(feature.detach(), size=(H, W), mode='bilinear', align_corners=False) for feature in hypercolumn]
-            input_i = [input_i]
-            input_i.extend(hypercolumn)
-            input_i = torch.cat(input_i, dim=1)
+        if self.opt.inet == 'wegnet' and self.vgg is not None:
+            # WEGNet path: Haar wavelet at input + VGG HyperColumn to half-res
+            hypercolumn = self.vgg(input_i)
+            vgg_feats = [F.interpolate(f.detach(), size=(H // 2, W // 2), mode='bilinear', align_corners=False) for f in hypercolumn]
 
-        output_i = self.net_i(input_i)
+            wavelet_feats = self.net_i.haar(input_i)
+            wavelet_feats = self.net_i.wavelet_proj(wavelet_feats)
+
+            merged = [wavelet_feats] + vgg_feats
+            merged = torch.cat(merged, dim=1)
+
+            output_i = self.net_i(merged)
+        else:
+            # Original ERRNet path
+            if self.vgg is not None:
+                hypercolumn = self.vgg(input_i)
+                hypercolumn = [F.interpolate(feature.detach(), size=(H, W), mode='bilinear', align_corners=False) for feature in hypercolumn]
+                input_i = [input_i]
+                input_i.extend(hypercolumn)
+                input_i = torch.cat(input_i, dim=1)
+
+            output_i = self.net_i(input_i)
 
         self.output_i = output_i
 
@@ -339,13 +364,16 @@ class ERRNetModel(ERRNetBase):
             ret_errors['IPixel'] = self.loss_icnn_pixel.item()
         if self.loss_icnn_vgg is not None:
             ret_errors['VGG'] = self.loss_icnn_vgg.item()
-            
+
         if self.opt.lambda_gan > 0 and self.loss_G_GAN is not None:
             ret_errors['G'] = self.loss_G_GAN.item()
             ret_errors['D'] = self.loss_D.item()
 
         if self.loss_CX is not None:
             ret_errors['CX'] = self.loss_CX.item()
+
+        if self.loss_excl is not None:
+            ret_errors['Excl'] = self.loss_excl.item()
 
         return ret_errors
 

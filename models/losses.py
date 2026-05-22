@@ -109,6 +109,67 @@ class CXLoss(VGGLoss):
         return loss
 
 
+def _sobel_kernels(device):
+    """Return Sobel gradient kernels G_x and G_y as fixed Conv2d layers."""
+    Gx = torch.tensor([[-1., 0., 1.], [-2., 0., 2.], [-1., 0., 1.]], device=device).view(1, 1, 3, 3)
+    Gy = torch.tensor([[-1., -2., -1.], [0., 0., 0.], [1., 2., 1.]], device=device).view(1, 1, 3, 3)
+    return Gx, Gy
+
+
+def _exclusion_loss_at_scale(predict, input, Gx, Gy):
+    """Compute exclusion loss at a single scale between T_hat and R_derived=I-T_hat."""
+    R_derived = input - predict
+    groups = predict.size(1)
+
+    grad_Tx = F.conv2d(predict, Gx, padding=1, groups=groups)
+    grad_Ty = F.conv2d(predict, Gy, padding=1, groups=groups)
+    grad_Rx = F.conv2d(R_derived, Gx, padding=1, groups=groups)
+    grad_Ry = F.conv2d(R_derived, Gy, padding=1, groups=groups)
+
+    grad_T_norm = torch.sqrt(grad_Tx ** 2 + grad_Ty ** 2 + 1e-6)
+    grad_R_norm = torch.sqrt(grad_Rx ** 2 + grad_Ry ** 2 + 1e-6)
+
+    grad_T_norm = grad_T_norm / (grad_T_norm.mean(dim=[1, 2, 3], keepdim=True) + 1e-6)
+    grad_R_norm = grad_R_norm / (grad_R_norm.mean(dim=[1, 2, 3], keepdim=True) + 1e-6)
+
+    return (grad_T_norm * grad_R_norm).mean()
+
+
+class ExclusionLoss(nn.Module):
+    """
+    Gradient-domain exclusion loss [Zhang et al., CVPR 2018].
+    Penalizes overlapping edges between T_hat and R_derived = I - T_hat.
+    Operates at 3 scales: 1x, 0.5x, 0.25x.
+    """
+    def __init__(self, num_scales=3):
+        super(ExclusionLoss, self).__init__()
+        self.num_scales = num_scales
+
+    def forward(self, predict, input):
+        device = predict.device
+        Gx, Gy = _sobel_kernels(device)
+
+        if predict.size(1) == 3:
+            Gx = Gx.repeat(3, 1, 1, 1)
+            Gy = Gy.repeat(3, 1, 1, 1)
+        else:
+            Gx = Gx.repeat(predict.size(1), 1, 1, 1)
+            Gy = Gy.repeat(predict.size(1), 1, 1, 1)
+
+        loss = 0
+        for i in range(self.num_scales):
+            scale = 0.5 ** i
+            if i > 0:
+                pooled_pred = F.avg_pool2d(predict, kernel_size=2, stride=2)
+                pooled_input = F.avg_pool2d(input, kernel_size=2, stride=2)
+            else:
+                pooled_pred = predict
+                pooled_input = input
+            loss += _exclusion_loss_at_scale(pooled_pred, pooled_input, Gx, Gy)
+
+        return loss / self.num_scales
+
+
 class ContentLoss():
     def initialize(self, loss):
         self.criterion = loss
