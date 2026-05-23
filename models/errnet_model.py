@@ -328,8 +328,9 @@ class ERRNetModel(ERRNetBase):
             hypercolumn = self.vgg(input_i)
             vgg_feats = [F.interpolate(f.detach(), size=(H // 2, W // 2), mode='bilinear', align_corners=False) for f in hypercolumn]
 
-            wavelet_feats = self.net_i.haar(input_i)
-            wavelet_feats = self.net_i.wavelet_proj(wavelet_feats)
+            net_i = self.net_i.module if self.multi_gpu else self.net_i
+            wavelet_feats = net_i.haar(input_i)
+            wavelet_feats = net_i.wavelet_proj(wavelet_feats)
 
             merged = [wavelet_feats] + vgg_feats
             merged = torch.cat(merged, dim=1)
