@@ -19,12 +19,13 @@ import data.reflect_dataset as datasets
 import util.util as util
 import data
 
-opt = TrainOptions().parse()
+import sys as _sys
 
-# WEGNet-specific overrides
-opt.inet = 'wegnet'
-opt.lambda_excl = 0.2
-opt.hyper = True  # VGG HyperColumn features required
+# WEGNet-specific overrides — inject before parse so printed values are correct
+_wegnet_defaults = ['--inet', 'wegnet', '--lambda_excl', '0.2', '--hyper']
+_sys.argv = _sys.argv[:1] + _wegnet_defaults + _sys.argv[1:]
+
+opt = TrainOptions().parse()
 
 cudnn.benchmark = True
 

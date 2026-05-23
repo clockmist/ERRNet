@@ -210,6 +210,7 @@ class ERRNetModel(ERRNetBase):
     def initialize(self, opt):
         BaseModel.initialize(self, opt)
         self.device = torch.device("cuda:%d" % self.gpu_ids[0] if len(self.gpu_ids) > 0 else "cpu")
+        self.multi_gpu = len(self.gpu_ids) > 1
 
         in_channels = 3
         self.vgg = None
@@ -222,6 +223,8 @@ class ERRNetModel(ERRNetBase):
                 in_channels += 1472  # RGB(3) + VGG HyperColumn(1472) = 1475
 
         self.net_i = arch.__dict__[self.opt.inet](in_channels, 3).to(self.device)
+        if self.multi_gpu:
+            self.net_i = nn.DataParallel(self.net_i, device_ids=self.gpu_ids)
         networks.init_weights(self.net_i, init_type=opt.init_type) # using default initialization as EDSR
         self.edge_map = EdgeMap(scale=1).to(self.device)
 
@@ -252,6 +255,8 @@ class ERRNetModel(ERRNetBase):
             # Define discriminator
             # if self.opt.lambda_gan > 0:
             self.netD = networks.define_D(opt, 3)
+            if self.multi_gpu:
+                self.netD = nn.DataParallel(self.netD, device_ids=self.gpu_ids)
             self.optimizer_D = torch.optim.Adam(self.netD.parameters(),
                                             lr=opt.lr, betas=(0.9, 0.999))
             self._init_optimizer([self.optimizer_D])
@@ -453,8 +458,11 @@ class NetworkWrapper(ERRNetBase):
         BaseModel.initialize(self, opt)
         self.device = torch.device("cuda:%d" % self.gpu_ids[0] if len(self.gpu_ids) > 0 else "cpu")
         self.net = net.to(self.device)
+        self.multi_gpu = len(self.gpu_ids) > 1
+        if self.multi_gpu:
+            self.net = nn.DataParallel(self.net, device_ids=self.gpu_ids)
         self.edge_map = EdgeMap(scale=1).to(self.device)
-        
+
         if self.isTrain:
             # define loss functions
             self.vgg = losses.Vgg19(requires_grad=False).to(self.device)
@@ -487,10 +495,12 @@ class NetworkWrapper(ERRNetBase):
             # define discriminator
             # if self.opt.lambda_gan > 0:
             self.netD = networks.define_D(opt, 3)
+            if self.multi_gpu:
+                self.netD = nn.DataParallel(self.netD, device_ids=self.gpu_ids)
             self.optimizer_D = torch.optim.Adam(self.netD.parameters(),
                                             lr=opt.lr, betas=(opt.beta1, 0.999))
             self._init_optimizer([self.optimizer_D])
-        
+
         if opt.no_verbose is False:
             self.print_network()
 
