@@ -59,22 +59,35 @@ class ERRNetModelV2(ERRNetBase):
             self.vgg = losses.Vgg19(requires_grad=False).to(self.device)
             in_channels += 1472
 
-        self.net_i = ERRNetTransformer(
-            in_channels, 3,
-            n_feats=256,
-            n_blocks=opt.n_transformer_blocks,
-            num_heads=opt.n_heads,
-            res_scale=0.1,
-            bottom_kernel_size=1,
-            pyramid=True,
-        ).to(self.device)
+        self.is_transformer = opt.block_type == 'transformer'
+
+        if self.is_transformer:
+            self.net_i = ERRNetTransformer(
+                in_channels, 3,
+                n_feats=256,
+                n_blocks=opt.n_transformer_blocks,
+                num_heads=opt.n_heads,
+                res_scale=0.1,
+                bottom_kernel_size=1,
+                pyramid=True,
+            ).to(self.device)
+            # FEM on 256-channel features before deconv3
+            self.freq_module = FrequencyEnhancementModule(
+                256, enabled=opt.use_frequency_module
+            ).to(self.device)
+        else:
+            self.net_i = arch.__dict__[opt.inet](
+                in_channels, 3, 256, 13, norm=None,
+                res_scale=0.1, se_reduction=8,
+                bottom_kernel_size=1, pyramid=True,
+            ).to(self.device)
+            # FEM on 3-channel output (DRNet lacks intermediate feature access)
+            self.freq_module = FrequencyEnhancementModule(
+                3, enabled=opt.use_frequency_module
+            ).to(self.device)
 
         networks.init_weights(self.net_i, init_type=opt.init_type)
         self.edge_map = EdgeMap(scale=1).to(self.device)
-
-        self.freq_module = FrequencyEnhancementModule(
-            256, enabled=opt.use_frequency_module
-        ).to(self.device)
 
         if self.isTrain:
             self.loss_dic = losses.init_loss(opt, self.Tensor)
@@ -133,9 +146,15 @@ class ERRNetModelV2(ERRNetBase):
             input_i.extend(hypercolumn)
             input_i = torch.cat(input_i, dim=1)
 
-        features = self.net_i.forward_features(input_i)
-        features = self.freq_module(features)
-        output_i = self.net_i.forward_head(features)
+        if self.is_transformer:
+            # Two-stage: features -> FEM (on 256ch) -> head
+            features = self.net_i.forward_features(input_i)
+            features = self.freq_module(features)
+            output_i = self.net_i.forward_head(features)
+        else:
+            # DRNet full forward, then FEM on 3-channel output
+            output_i = self.net_i(input_i)
+            output_i = self.freq_module(output_i)
 
         self.output_i = output_i
         return output_i
