@@ -248,6 +248,18 @@ class DiscLossRa(DiscLoss):
         return loss_D * 0.5, pred_fake, pred_real
 
 
+class FFTLoss(nn.Module):
+    """Frequency-domain L1 loss on amplitude spectrum."""
+    def __init__(self):
+        super().__init__()
+        self.loss = nn.L1Loss()
+
+    def forward(self, pred, target):
+        pred_fft = torch.fft.rfft2(pred, norm='ortho')
+        target_fft = torch.fft.rfft2(target, norm='ortho')
+        return self.loss(torch.abs(pred_fft), torch.abs(target_fft))
+
+
 def init_loss(opt, tensor):
     disc_loss = None
     content_loss = None
