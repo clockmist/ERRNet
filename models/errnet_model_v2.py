@@ -67,7 +67,7 @@ class ERRNetModelV2(ERRNetBase):
                 n_feats=256,
                 n_blocks=opt.n_transformer_blocks,
                 num_heads=opt.n_heads,
-                res_scale=0.1,
+                res_scale=1.0,
                 bottom_kernel_size=1,
                 pyramid=True,
             ).to(self.device)
