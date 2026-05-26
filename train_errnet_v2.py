@@ -81,8 +81,10 @@ engine.model.opt.lambda_gan = 0
 set_learning_rate(1e-4)
 
 while engine.epoch < 60:
-    if engine.epoch == 20:
-        engine.model.opt.lambda_gan = 0.01
+    # GAN disabled for Transformer — discriminator wins too easily
+    # when generator is still learning (epoch 20 output quality insufficient)
+    # if engine.epoch == 20:
+    #     engine.model.opt.lambda_gan = 0.01
     if engine.epoch == 30:
         set_learning_rate(5e-5)
     if engine.epoch == 40:
