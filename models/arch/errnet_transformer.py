@@ -117,7 +117,7 @@ class ERRNetTransformer(nn.Module):
         from models.arch.default import PyramidPooling
         self.pyramid = PyramidPooling(n_feats, n_feats, scales=(4, 8, 16, 32), ct_channels=n_feats // 4) if pyramid else None
 
-        self.deconv3 = self._conv_layer(conv, n_feats, out_channels, 1, 1, norm=None, act=None)
+        self.deconv3 = self._conv_layer(conv, n_feats, out_channels, 1, 1, norm=None, act=nn.ReLU(True))
 
     @staticmethod
     def _conv_layer(conv, in_c, out_c, kernel_size, stride, padding=None, norm=None, act=None):
